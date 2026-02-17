@@ -1,0 +1,9 @@
+project:
+  name: longitudinal-evaluation
+paths:
+  raw_days: data/raw_days.jsonl
+  dataset: data/dataset.jsonl
+  report: evaluation_report.md
+heuristics:
+  date_locale: [es, en]
+  energy_levels: [low, medium, high]
