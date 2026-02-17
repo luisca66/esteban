@@ -47,6 +47,7 @@ After running `python src/evaluate_process.py`, open:
 The dashboard is a single self-contained HTML file with inline CSS/JS and uses Chart.js from CDN for monthly and weekly charts.
 
 Weekly evaluation assumes a fixed 5-day workweek (Mon–Fri): missing weekdays are penalized as inactive days.
+The dashboard is a single self-contained HTML file with inline CSS/JS and uses Chart.js from CDN for a monthly exercise/reading time series.
 
 ## Notes
 

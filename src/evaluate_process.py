@@ -6,6 +6,7 @@ import json
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 from typing import Iterable
 
@@ -97,6 +98,7 @@ def compute_longest_activity_streak(rows: list[dict]) -> int:
     for row in rows:
         parsed = parse_iso_date(row.get("date"))
         if parsed is not None and parsed.weekday() < 5:
+        if parsed is not None:
             dated_rows.append((parsed, row))
 
     if not dated_rows:
@@ -118,6 +120,17 @@ def compute_longest_activity_streak(rows: list[dict]) -> int:
             else:
                 current_streak = 0
         cursor += timedelta(days=1)
+    dated_rows.sort(key=lambda x: x[0])
+    max_streak = 0
+    current_streak = 0
+
+    for _, row in dated_rows:
+        has_activity = bool(row.get("exercise_done") or row.get("reading_done"))
+        if has_activity:
+            current_streak += 1
+            max_streak = max(max_streak, current_streak)
+        else:
+            current_streak = 0
 
     return max_streak
 
@@ -272,6 +285,40 @@ def render_dashboard_html(metrics: Metrics, monthly_series: list[dict], weekly_s
         "active_days": [w.active_days for w in weekly_stats],
         "missing_weekdays": [w.missing_weekdays for w in weekly_stats],
         "activity_rate": [round(w.activity_rate * 100, 2) for w in weekly_stats],
+def render_markdown(metrics: Metrics, rows: list[dict]) -> str:
+    energy_counts = Counter(r.get("energy_level", "unknown") for r in rows)
+
+    return "\n".join(
+        [
+            "# Evaluation Report",
+            "",
+            "## Core Metrics",
+            f"- total_days: **{metrics.total_days}**",
+            f"- exercise_rate: **{metrics.exercise_rate:.1%}**",
+            f"- reading_rate: **{metrics.reading_rate:.1%}**",
+            f"- smoking_mentions_rate: **{metrics.smoking_mentions_rate:.1%}**",
+            f"- medication_mentions_rate: **{metrics.medication_mentions_rate:.1%}**",
+            f"- consistency_streak (exercise OR reading): **{metrics.consistency_streak} days**",
+            "",
+            "## Trend Over Time",
+            f"- {metrics.trend_summary}",
+            "",
+            "## Energy Level Distribution",
+            *(f"- {level}: {count}" for level, count in sorted(energy_counts.items())),
+            "",
+        ]
+    )
+
+
+def render_dashboard_html(metrics: Metrics, monthly_series: list[dict]) -> str:
+    labels = [row["month"] for row in monthly_series]
+    exercise_counts = [row["exercise"] for row in monthly_series]
+    reading_counts = [row["reading"] for row in monthly_series]
+
+    payload = {
+        "labels": labels,
+        "exercise": exercise_counts,
+        "reading": reading_counts,
     }
 
     return f"""<!doctype html>
@@ -290,6 +337,12 @@ def render_dashboard_html(metrics: Metrics, monthly_series: list[dict], weekly_s
     }}
     body {{ margin: 0; background: var(--bg); color: var(--text); font-family: Arial, sans-serif; }}
     .container {{ max-width: 1160px; margin: 24px auto; padding: 0 16px; }}
+      --accent: #3b82f6;
+      --accent-2: #10b981;
+    }}
+    body {{ margin: 0; background: var(--bg); color: var(--text); font-family: Arial, sans-serif; }}
+    .container {{ max-width: 1100px; margin: 24px auto; padding: 0 16px; }}
+    h1 {{ margin-bottom: 8px; }}
     .subtitle {{ color: var(--muted); margin-bottom: 20px; }}
     .cards {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }}
     .card {{ background: var(--panel); border-radius: 12px; padding: 14px; }}
@@ -302,6 +355,7 @@ def render_dashboard_html(metrics: Metrics, monthly_series: list[dict], weekly_s
   <div class=\"container\">
     <h1>Executive Dashboard</h1>
     <div class=\"subtitle\">Longitudinal activity summary (workweek penalization: missing weekdays count as inactive)</div>
+    <div class=\"subtitle\">Longitudinal activity summary</div>
 
     <div class=\"cards\">
       <div class=\"card\"><div class=\"label\">Total days processed</div><div class=\"value\">{metrics.total_days}</div></div>
@@ -310,6 +364,7 @@ def render_dashboard_html(metrics: Metrics, monthly_series: list[dict], weekly_s
       <div class=\"card\"><div class=\"label\">Smoking mention rate</div><div class=\"value\">{metrics.smoking_mentions_rate:.1%}</div></div>
       <div class=\"card\"><div class=\"label\">Medication mention rate</div><div class=\"value\">{metrics.medication_mentions_rate:.1%}</div></div>
       <div class=\"card\"><div class=\"label\">Consistency streak</div><div class=\"value\">{metrics.consistency_streak} weekdays</div></div>
+      <div class=\"card\"><div class=\"label\">Consistency streak</div><div class=\"value\">{metrics.consistency_streak} days</div></div>
     </div>
 
     <div class=\"chart-wrap\">
@@ -376,6 +431,30 @@ def render_dashboard_html(metrics: Metrics, monthly_series: list[dict], weekly_s
             backgroundColor: 'rgba(16,185,129,0.2)',
             tension: 0.25,
             yAxisID: 'y1'
+  </div>
+
+  <script>
+    const data = {json.dumps(payload)};
+
+    const ctx = document.getElementById('monthlyChart').getContext('2d');
+    new Chart(ctx, {{
+      type: 'line',
+      data: {{
+        labels: data.labels,
+        datasets: [
+          {{
+            label: 'Exercise days',
+            data: data.exercise,
+            borderColor: '#3b82f6',
+            backgroundColor: 'rgba(59,130,246,0.2)',
+            tension: 0.25
+          }},
+          {{
+            label: 'Reading days',
+            data: data.reading,
+            borderColor: '#10b981',
+            backgroundColor: 'rgba(16,185,129,0.2)',
+            tension: 0.25
           }}
         ]
       }},
@@ -408,6 +487,10 @@ def render_dashboard_html(metrics: Metrics, monthly_series: list[dict], weekly_s
             ticks: {{ callback: function(v) {{ return v + '%'; }}, color: '#cbd5e1' }},
             grid: {{ drawOnChartArea: false }}
           }}
+        plugins: {{ legend: {{ labels: {{ color: '#e5e7eb' }} }} }},
+        scales: {{
+          x: {{ ticks: {{ color: '#cbd5e1' }}, grid: {{ color: 'rgba(148,163,184,0.2)' }} }},
+          y: {{ beginAtZero: true, ticks: {{ color: '#cbd5e1' }}, grid: {{ color: 'rgba(148,163,184,0.2)' }} }}
         }}
       }}
     }});
@@ -425,11 +508,13 @@ def main() -> None:
     metrics = evaluate(rows)
     weekly_stats = build_weekly_workweek_stats(rows)
     report = render_markdown(metrics, rows, weekly_stats)
+    report = render_markdown(metrics, rows)
     REPORT_OUTPUT.write_text(report, encoding="utf-8")
 
     monthly_series = build_monthly_series(rows)
     DASHBOARD_OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     dashboard_html = render_dashboard_html(metrics, monthly_series, weekly_stats)
+    dashboard_html = render_dashboard_html(metrics, monthly_series)
     DASHBOARD_OUTPUT.write_text(dashboard_html, encoding="utf-8")
 
     print(f"Wrote report to {REPORT_OUTPUT}")
